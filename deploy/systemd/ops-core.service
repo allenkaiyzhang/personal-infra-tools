@@ -1,0 +1,15 @@
+[Unit]
+Description=ops-core
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/personal-infra-tools
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/personal-infra-tools/.env
+ExecStart=/opt/personal-infra-tools/.venv/bin/python -m uvicorn ops_core.main:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

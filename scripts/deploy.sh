@@ -1,18 +1,12 @@
 #!/bin/sh
 set -eu
 
-PROJECT_NAME="${PROJECT_NAME:-personal-infra-tools}"
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 VENV_PATH="${VENV_PATH:-$PROJECT_ROOT/.venv}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
-RECREATE_VENV="${RECREATE_VENV:-0}"
-SERVICE_REGISTRY_PATH="${SERVICE_REGISTRY_PATH:-}"
+SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-ops-core}"
 
 cd "$PROJECT_ROOT"
-
-if [ "$RECREATE_VENV" = "1" ] && [ -d "$VENV_PATH" ]; then
-  rm -rf "$VENV_PATH"
-fi
 
 mkdir -p data logs
 
@@ -23,17 +17,18 @@ fi
 "$VENV_PATH/bin/python" -m pip install --upgrade pip
 "$VENV_PATH/bin/pip" install -e ".[dev]"
 
+"$VENV_PATH/bin/python" -m compileall .
+
 if [ "$SKIP_TESTS" != "1" ]; then
-  "$VENV_PATH/bin/pytest"
+  "$VENV_PATH/bin/pytest" -q
 fi
 
-if [ -n "$SERVICE_REGISTRY_PATH" ]; then
-  export SERVICE_REGISTRY_PATH
-  "$VENV_PATH/bin/fastapi-message" validate-registry
-else
-  echo "SERVICE_REGISTRY_PATH is not set; skipping real registry validation."
-fi
+install -m 0644 deploy/systemd/ops-core.service "/etc/systemd/system/${SYSTEMD_SERVICE}.service"
+systemctl daemon-reload
+systemctl enable "$SYSTEMD_SERVICE"
+systemctl restart "$SYSTEMD_SERVICE"
 
-PYTHON="$VENV_PATH/bin/python" scripts/smoke_test.sh
+scripts/smoke_test.sh
+systemctl status --no-pager "$SYSTEMD_SERVICE"
 
-echo "Deploy complete: $PROJECT_NAME package installed and smoke test passed."
+echo "Deploy complete: ops-core installed, restarted, and smoke test passed."

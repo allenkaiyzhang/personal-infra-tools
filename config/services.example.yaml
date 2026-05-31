@@ -1,60 +1,75 @@
-version: 1
-
-defaults:
-  timeout_seconds: 30
-  retries: 1
-
 services:
-  schedule_reminder:
-    base_url: "http://<VPS_IP>:8040"
-    auth: "none"
-    health_path: "/health"
-    hello_path: "/pipeline/hello"
+  ai_agent:
+    label: AI Agent
+    description: Execute analysis, report, and task-style agent actions.
+    base_url: http://127.0.0.1:8001
+    auth:
+      mode: bearer
+      token_env: AI_AGENT_TOKEN
+    enabled: true
     actions:
       health:
-        method: "GET"
-        path: "/health"
+        label: Health
+        method: GET
+        path: /health
+        timeout_seconds: 5
+        safe: true
+      demo:
+        label: Demo Agent Task
+        method: POST
+        path: /pipeline/run
+        timeout_seconds: 90
+        safe: false
+        demo_payload:
+          task: demo
+          input: Run a simple demo analysis and return a short result.
 
-  api_report_agent:
-    base_url: "http://<ECS_IP>:8020"
-    auth: "none"
-    health_path: "/health"
-    hello_path: "/pipeline/hello"
+  ai_searcher:
+    label: AI Searcher
+    description: Search indexed/private/public information through a controlled API.
+    base_url: http://127.0.0.1:8002
+    auth:
+      mode: bearer
+      token_env: AI_SEARCHER_TOKEN
+    enabled: true
     actions:
-      run:
-        method: "POST"
-        path: "/api/v1/report/run"
-      status:
-        method: "GET"
-        path: "/api/v1/report/status"
+      health:
+        label: Health
+        method: GET
+        path: /health
+        timeout_seconds: 5
+        safe: true
+      demo:
+        label: Demo Search
+        method: POST
+        path: /api/search
+        timeout_seconds: 30
+        safe: true
+        demo_payload:
+          query: demo
+          limit: 5
 
-  personal_ai_searcher:
-    base_url: "http://<VPS_IP>:8030"
-    auth: "none"
-    health_path: "/health"
-    hello_path: "/pipeline/hello"
+  private_db:
+    label: Private DB
+    description: Store and retrieve private information for personal automation.
+    base_url: http://127.0.0.1:8003
+    auth:
+      mode: bearer
+      token_env: PRIVATE_DB_TOKEN
+    enabled: true
     actions:
-      search:
-        method: "POST"
-        path: "/api/v1/search"
-
-  private_info_db:
-    base_url: "http://<ECS_IP>:8010"
-    auth: "bearer"
-    token_env: "PRIVATE_INFO_DB_TOKEN"
-    health_path: "/health"
-    hello_path: "/pipeline/hello"
-    actions:
-      ingest_text:
-        method: "POST"
-        path: "/api/v1/ingest/text"
-      ingest_file:
-        method: "POST"
-        path: "/api/v1/ingest/file"
-        type: "file"
-      search:
-        method: "POST"
-        path: "/api/v1/search"
-      retrieve:
-        method: "POST"
-        path: "/api/v1/retrieve"
+      health:
+        label: Health
+        method: GET
+        path: /health
+        timeout_seconds: 5
+        safe: true
+      demo:
+        label: Demo Ingest
+        method: POST
+        path: /api/v1/ingest/text
+        timeout_seconds: 30
+        safe: false
+        demo_payload:
+          text: demo private note from ops-core
+          source: ops-core-demo

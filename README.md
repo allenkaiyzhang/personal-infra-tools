@@ -1,270 +1,244 @@
-# personal-infra-tools
+# ops-core
 
-`personal-infra-tools` provides the `fastapi_message` Python package: a small registry-driven helper for calling one FastAPI service from another with:
+`personal-infra-tools` is now `ops-core`: the central control plane for personal business services.
 
-```python
-from fastapi_message import send_action
-
-result = send_action("api_report_agent", "run", {"topic": "market"})
-```
-
-Business code should not hard-code URL, port, HTTP method, API path, auth mode, token, headers, request id, `httpx` details, `response.json()`, or status-code handling. Those details live in `services.yaml` and inside `fastapi_message`.
-
-## What This Solves
-
-- Cross-service FastAPI calls through `send_action(service, action, payload)`.
-- Multipart file calls through `send_file_action(service, action, file_path, fields=...)`.
-- Standard outbound headers: `X-Request-ID`, `X-Source-Service`, `X-Target-Service`, `User-Agent`, and optional `X-Idempotency-Key`.
-- Registry-based auth and route lookup.
-- Consistent exceptions for config, network, decode, auth, and upstream failures.
-- A minimal inbound FastAPI pipeline with `/health`, `/pipeline/hello`, request id propagation, access logs, and bearer hello check.
-- CLI commands for validation and troubleshooting.
-
-## What This Does Not Solve
-
-This package does not implement Telegram bots, private-info-db ingest logic, embeddings, indexing, search business logic, report generation, databases, Nginx, HTTPS certificates, domains, cloud security group mutation, VPN, service mesh, dynamic service discovery, central gateways, or local dynamic IP support.
-
-## Directory Structure
+It is not a generic toolbox anymore. The intended topology is:
 
 ```text
-personal-infra-tools/
-  pyproject.toml
-  README.md
-  .env.example
-  config/services.example.yaml
-  fastapi_message/
-  tests/
-  scripts/deploy.sh
-  scripts/smoke_test.sh
-  deploy/systemd/personal-infra-tools-example.service
-  .github/workflows/ci.yml
-  .github/workflows/deploy.yml
+Telegram adapter / future UI
+  -> ops-core
+  -> downstream business services
 ```
 
-## Install
+Business services must not call each other directly. All controlled cross-service operations go through `ops-core`.
+
+Initial downstream services:
+
+- `ai_agent`
+- `ai_searcher`
+- `private_db`
+
+## v0.1 Scope
+
+Implemented:
+
+- `GET /health`
+- central service registry in `config/services.example.yaml`
+- service list and service detail APIs
+- registry-defined service health and demo action execution
+- minimal Telegram interaction endpoint returning UI response objects
+- minimal service action API for smoke tests
+- venv + systemd deployment files
+- audit logging for service actions
+- tests
+
+Not implemented:
+
+- Web frontend
+- Telegram bot
+- SSH
+- shell execution
+- arbitrary URL caller
+- arbitrary user payload forwarding
+- scheduler or reminders
+- AI natural language router
+- cross-service orchestration
+- business-service-to-business-service communication
+
+## Configuration
+
+`.env` is for secrets only:
+
+```bash
+OPS_CORE_TOKEN=
+ADMIN_USER_IDS=
+OPS_CORE_CONFIG_PATH=
+SERVICE_REGISTRY_PATH=
+AI_AGENT_TOKEN=
+AI_SEARCHER_TOKEN=
+PRIVATE_DB_TOKEN=
+```
+
+YAML contains non-sensitive config:
+
+- `config/ops-core.example.yaml`: local service bind address, paths, security flags, deploy defaults.
+- `config/services.example.yaml`: central registry for `ai_agent`, `ai_searcher`, and `private_db`.
+
+Real token values must never be committed. `token_env` names are allowed in YAML because they are not secrets.
+
+## Local Run
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+export OPS_CORE_ALLOW_NO_AUTH=1
+uvicorn ops_core.main:app --host 127.0.0.1 --port 8080
 ```
 
-On Windows PowerShell:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-```
-
-## Configuration
-
-Real service communication config belongs in YAML:
+Health check:
 
 ```bash
-sudo mkdir -p /opt/personal-infra
-sudo cp config/services.example.yaml /opt/personal-infra/services.yaml
-export SERVICE_REGISTRY_PATH=/opt/personal-infra/services.yaml
+curl http://127.0.0.1:8080/health
 ```
 
-Use `services.yaml` for non-secret communication config:
+Expected:
 
-- `base_url`
-- `auth`
-- `health_path`
-- `hello_path`
-- `action` names
-- HTTP `method`
-- API `path`
-- `timeout_seconds`
-- `retries`
-
-Use `.env` or systemd environment only for secrets and minimal runtime identity:
-
-- `SERVICE_NAME`
-- `SERVICE_REGISTRY_PATH`
-- `PRIVATE_INFO_DB_TOKEN`
-- `API_TOKEN`
-- API keys, passwords, secret database URLs
-
-Do not put token values in `services.yaml`. `token_env` is allowed because it is only an environment variable name.
-
-## Security Baseline
-
-v0.1 assumes fixed public IP plus fixed port plus cloud security group/firewall allowlist.
-
-- Service ports must not be open to `0.0.0.0/0`.
-- Each service port should allow only known ECS/VPS peer public IPs.
-- `private-info-db` must use `auth: "bearer"`.
-- HTTP is acceptable for v0.1 only under the fixed peer IP allowlist model.
-
-## Use In A FastAPI Service
-
-```python
-from fastapi import FastAPI
-from fastapi_message import setup_message_pipeline
-
-app = FastAPI()
-
-setup_message_pipeline(
-    app,
-    service_name="api_report_agent",
-    auth_mode="none",
-)
+```json
+{"status":"ok","service":"ops-core","role":"control-plane"}
 ```
 
-This registers:
+## Telegram Adapter Contract
 
-- `GET /health`
-- `GET /pipeline/hello`
-- request id middleware
-- access log middleware
-- `MessageError` JSON handler
+The Telegram adapter, such as a future `schedule-reminder` integration, should normalize Telegram events and forward them to:
 
-For bearer-protected service hello checks:
-
-```python
-setup_message_pipeline(app, service_name="private_info_db", auth_mode="bearer")
+```text
+POST /api/interactions/telegram
+Authorization: Bearer <OPS_CORE_TOKEN>
 ```
 
-`/health` is never authenticated and has no side effects. `/pipeline/hello` validates bearer auth in bearer mode.
+Example `/start` event:
 
-Business routes that need bearer protection can use:
-
-```python
-from fastapi import Depends
-from fastapi_message import require_bearer_auth
-
-@app.post("/api/v1/ingest/text", dependencies=[Depends(require_bearer_auth)])
-def ingest_text(payload: dict):
-    return {"status": "queued"}
+```json
+{
+  "channel": "telegram",
+  "event_type": "command",
+  "user": {"id": "123456789", "username": "kevin"},
+  "chat": {"id": "123456789", "type": "private"},
+  "message": {"id": 1001, "text": "/start"},
+  "command": {"name": "start", "args": []}
+}
 ```
 
-## Call Services
+`ops-core` returns UI responses:
 
-```python
-from fastapi_message import send_action, send_file_action
-
-send_action("personal_ai_searcher", "search", {"query": "hello"})
-send_action("api_report_agent", "run", {"topic": "market"})
-send_action("private_info_db", "ingest_text", {"text": "hello"})
-
-send_file_action(
-    "private_info_db",
-    "ingest_file",
-    "/tmp/file.txt",
-    fields={"source": "telegram"},
-    idempotency_key="telegram:file:unique:sha256",
-)
+```json
+{
+  "ok": true,
+  "response": {
+    "type": "screen",
+    "text": "ops-core\n\nCentral control plane",
+    "parse_mode": "HTML",
+    "buttons": [],
+    "delivery": {"mode": "reply"}
+  }
+}
 ```
 
-## CLI Troubleshooting
+## Service Registry
+
+`services.yaml` is the central registry. Actions are declared per service. `ops-core` builds URLs only from:
+
+```text
+registry base_url + registry action.path
+```
+
+The request body for service action API calls may contain only:
+
+```json
+{"confirmed": true}
+```
+
+No arbitrary user payload forwarding exists in v0.1. Demo payloads come only from registry `demo_payload`.
+
+Unsafe demo actions require confirmation:
+
+- `ai_agent` demo: confirmation required
+- `ai_searcher` demo: executes immediately
+- `private_db` demo: confirmation required
+
+## Auth
+
+Protected endpoints require:
+
+```text
+Authorization: Bearer <OPS_CORE_TOKEN>
+```
+
+For local development only, if `OPS_CORE_TOKEN` is missing or empty, set:
 
 ```bash
-fastapi-message validate-registry
-fastapi-message ping private_info_db
-fastapi-message smoke private_info_db
-fastapi-message list-actions private_info_db
-fastapi-message action personal_ai_searcher search '{"query":"hello"}'
-fastapi-message post-json api_report_agent /api/v1/report/run '{"topic":"market"}'
-fastapi-message file-action private_info_db ingest_file /tmp/a.txt --field source=telegram --idempotency-key abc
-fastapi-message post-file private_info_db /api/v1/ingest/file /tmp/a.txt --field source=telegram --idempotency-key abc
+export OPS_CORE_ALLOW_NO_AUTH=1
+```
+
+If `ADMIN_USER_IDS` is set, `/api/interactions/telegram` rejects Telegram users whose `user.id` is not listed.
+
+## API
+
+```bash
+GET /health
+POST /api/interactions/telegram
+GET /api/services
+GET /api/services/{service_id}
+POST /api/services/{service_id}/actions/{action_id}
 ```
 
 ## Test
 
 ```bash
-pytest
-scripts/smoke_test.sh
+python -m compileall .
+pytest -q
 ```
 
-`scripts/smoke_test.sh` validates the example registry, imports `fastapi_message`, creates a test FastAPI app, verifies `/health`, verifies bearer rejection, and verifies authenticated `/pipeline/hello`.
+## Deploy With venv + systemd
 
-## ECS/EC2/VPS Deploy
-
-This package is normally installed into each business service venv. It is not a long-running daemon.
-
-Default package deployment:
+On the server:
 
 ```bash
-export PROJECT_ROOT=/opt/personal-infra-tools
-export SERVICE_REGISTRY_PATH=/opt/personal-infra/services.yaml
+cd /opt/personal-infra-tools
+cp .env.example .env
+# edit .env with real secrets
 scripts/deploy.sh
 ```
 
-Supported deployment variables:
-
-- `PROJECT_NAME`, default `personal-infra-tools`
-- `PROJECT_ROOT`, default current directory
-- `VENV_PATH`, default `$PROJECT_ROOT/.venv`
-- `SKIP_TESTS=1` to skip pytest
-- `RECREATE_VENV=1` to rebuild the venv
-- `SERVICE_REGISTRY_PATH`, optional; when set, `deploy.sh` validates it
-
 `scripts/deploy.sh`:
 
-- enters the project directory
+- uses `set -eu`
+- creates `.venv` if missing
+- upgrades pip
+- installs the package
 - creates `data/` and `logs/`
-- creates or reuses a venv
-- installs dependencies
-- runs tests unless `SKIP_TESTS=1`
-- validates the registry only when `SERVICE_REGISTRY_PATH` is set
-- runs smoke tests
+- runs `python -m compileall .`
+- runs `pytest -q` unless `SKIP_TESTS=1`
+- installs `deploy/systemd/ops-core.service`
+- runs `systemctl daemon-reload`
+- enables and restarts `ops-core`
+- runs `scripts/smoke_test.sh`
+- prints `systemctl status --no-pager ops-core`
 - exits
 
-It does not start foreground services. Long-running business services should be managed by their own systemd units.
+It does not run uvicorn in the foreground.
 
-Example systemd environment for a business service:
-
-```ini
-[Service]
-Environment=SERVICE_NAME=api_report_agent
-Environment=SERVICE_REGISTRY_PATH=/opt/personal-infra/services.yaml
-Environment=PRIVATE_INFO_DB_TOKEN=replace-me
-```
-
-Systemd commands:
+## Smoke Test
 
 ```bash
-sudo systemctl status api-report-agent
-sudo systemctl restart api-report-agent
-journalctl -u api-report-agent -f
+scripts/smoke_test.sh
 ```
 
-## GitHub Actions
+The smoke test calls:
 
-CI is defined in `.github/workflows/ci.yml`. It runs on push and pull request, installs the package on Python 3.11, runs tests, validates `config/services.example.yaml`, and runs the smoke test.
+- `GET http://127.0.0.1:8080/health`
+- if `OPS_CORE_TOKEN` is set, `POST /api/interactions/telegram` with `/start`
 
-Deployment is defined in `.github/workflows/deploy.yml`. It runs on pushes to `main` and supports manual `workflow_dispatch`.
+It exits non-zero on failure.
 
-Required repository secrets:
+## Logs
 
-- `DEPLOY_HOST`
-- `DEPLOY_USER`
-- `DEPLOY_SSH_KEY`
-- `DEPLOY_PATH`
+```bash
+scripts/tail_logs.sh
+```
 
-Optional repository secrets:
+This tails `logs/ops-core.log` if it exists, otherwise falls back to:
 
-- `DEPLOY_PORT`, default `22`
-- `DEPLOY_BRANCH`, default `main`
+```bash
+journalctl -u ops-core -f
+```
 
-The deploy workflow connects over SSH and runs `scripts/deploy.sh` on the target host. If checkout or pull fails because the remote working tree is dirty, divergent, or inconsistent, the workflow resets the Git working tree under `DEPLOY_PATH` and retries against `origin/<branch>`.
+## Troubleshooting
 
-Cleanup is limited to the repository working tree. The deploy workflow excludes `.env`, `*.secret`, `data/`, and `logs/` from `git clean`, and it does not overwrite `/opt/personal-infra/services.yaml`.
-
-## Error Troubleshooting
-
-- `RegistryError`: registry path is missing, YAML is invalid, service is missing, or registry structure is wrong.
-- `ActionNotFoundError`: action is not registered under that service.
-- `ConfigError`: required token env var is missing.
-- `NetworkError`: IP/port is unreachable; check security group, firewall, listen address, and service status.
-- `TimeoutError`: target did not respond before timeout.
-- `UnauthorizedError`: bearer token is missing or wrong.
-- `DecodeError`: target returned non-JSON or non-object JSON for a successful response.
-- `UpstreamError`: target returned 500/502/503/504.
-- GitHub Actions deploy failed: check `DEPLOY_SSH_KEY`, host reachability, `DEPLOY_PATH`, remote Git permissions, and the `scripts/deploy.sh` output in the workflow log.
-
-## Extension Path
-
-Keep v0.1 simple. Add schema validation, richer auth, service discovery, HTTPS automation, or workflow orchestration only when a real service needs it.
+- `/health` fails: check `systemctl status ops-core` and `journalctl -u ops-core -f`.
+- Protected endpoint returns 401: check `OPS_CORE_TOKEN` and the `Authorization` header.
+- Telegram interaction returns 403: check `ADMIN_USER_IDS`.
+- Service action fails with missing bearer token: set `AI_AGENT_TOKEN`, `AI_SEARCHER_TOKEN`, or `PRIVATE_DB_TOKEN`.
+- Downstream unavailable: verify the service is listening at the registry `base_url` and the firewall allows ops-core.
+- No logs file: use `journalctl -u ops-core -f`.
