@@ -1,0 +1,60 @@
+version: 1
+
+defaults:
+  timeout_seconds: 30
+  retries: 1
+
+services:
+  schedule_reminder:
+    base_url: "http://<VPS_IP>:8040"
+    auth: "none"
+    health_path: "/health"
+    hello_path: "/pipeline/hello"
+    actions:
+      health:
+        method: "GET"
+        path: "/health"
+
+  api_report_agent:
+    base_url: "http://<ECS_IP>:8020"
+    auth: "none"
+    health_path: "/health"
+    hello_path: "/pipeline/hello"
+    actions:
+      run:
+        method: "POST"
+        path: "/api/v1/report/run"
+      status:
+        method: "GET"
+        path: "/api/v1/report/status"
+
+  personal_ai_searcher:
+    base_url: "http://<VPS_IP>:8030"
+    auth: "none"
+    health_path: "/health"
+    hello_path: "/pipeline/hello"
+    actions:
+      search:
+        method: "POST"
+        path: "/api/v1/search"
+
+  private_info_db:
+    base_url: "http://<ECS_IP>:8010"
+    auth: "bearer"
+    token_env: "PRIVATE_INFO_DB_TOKEN"
+    health_path: "/health"
+    hello_path: "/pipeline/hello"
+    actions:
+      ingest_text:
+        method: "POST"
+        path: "/api/v1/ingest/text"
+      ingest_file:
+        method: "POST"
+        path: "/api/v1/ingest/file"
+        type: "file"
+      search:
+        method: "POST"
+        path: "/api/v1/search"
+      retrieve:
+        method: "POST"
+        path: "/api/v1/retrieve"
