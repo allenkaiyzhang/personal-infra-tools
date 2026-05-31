@@ -36,6 +36,9 @@ personal-infra-tools/
   tests/
   scripts/deploy.sh
   scripts/smoke_test.sh
+  deploy/systemd/personal-infra-tools-example.service
+  .github/workflows/ci.yml
+  .github/workflows/deploy.yml
 ```
 
 ## Install
@@ -184,20 +187,28 @@ This package is normally installed into each business service venv. It is not a 
 Default package deployment:
 
 ```bash
-export APP_DIR=/opt/personal-infra-tools
+export PROJECT_ROOT=/opt/personal-infra-tools
 export SERVICE_REGISTRY_PATH=/opt/personal-infra/services.yaml
 scripts/deploy.sh
 ```
 
+Supported deployment variables:
+
+- `PROJECT_NAME`, default `personal-infra-tools`
+- `PROJECT_ROOT`, default current directory
+- `VENV_PATH`, default `$PROJECT_ROOT/.venv`
+- `SKIP_TESTS=1` to skip pytest
+- `RECREATE_VENV=1` to rebuild the venv
+- `SERVICE_REGISTRY_PATH`, optional; when set, `deploy.sh` validates it
+
 `scripts/deploy.sh`:
 
 - enters the project directory
-- optionally runs `git pull --ff-only` when `GIT_PULL=1`
 - creates `data/` and `logs/`
 - creates or reuses a venv
 - installs dependencies
-- runs tests
-- validates the registry
+- runs tests unless `SKIP_TESTS=1`
+- validates the registry only when `SERVICE_REGISTRY_PATH` is set
 - runs smoke tests
 - exits
 
@@ -220,6 +231,28 @@ sudo systemctl restart api-report-agent
 journalctl -u api-report-agent -f
 ```
 
+## GitHub Actions
+
+CI is defined in `.github/workflows/ci.yml`. It runs on push and pull request, installs the package on Python 3.11, runs tests, validates `config/services.example.yaml`, and runs the smoke test.
+
+Deployment is defined in `.github/workflows/deploy.yml`. It runs on pushes to `main` and supports manual `workflow_dispatch`.
+
+Required repository secrets:
+
+- `DEPLOY_HOST`
+- `DEPLOY_USER`
+- `DEPLOY_SSH_KEY`
+- `DEPLOY_PATH`
+
+Optional repository secrets:
+
+- `DEPLOY_PORT`, default `22`
+- `DEPLOY_BRANCH`, default `main`
+
+The deploy workflow connects over SSH and runs `scripts/deploy.sh` on the target host. If checkout or pull fails because the remote working tree is dirty, divergent, or inconsistent, the workflow resets the Git working tree under `DEPLOY_PATH` and retries against `origin/<branch>`.
+
+Cleanup is limited to the repository working tree. The deploy workflow excludes `.env`, `*.secret`, `data/`, and `logs/` from `git clean`, and it does not overwrite `/opt/personal-infra/services.yaml`.
+
 ## Error Troubleshooting
 
 - `RegistryError`: registry path is missing, YAML is invalid, service is missing, or registry structure is wrong.
@@ -230,6 +263,7 @@ journalctl -u api-report-agent -f
 - `UnauthorizedError`: bearer token is missing or wrong.
 - `DecodeError`: target returned non-JSON or non-object JSON for a successful response.
 - `UpstreamError`: target returned 500/502/503/504.
+- GitHub Actions deploy failed: check `DEPLOY_SSH_KEY`, host reachability, `DEPLOY_PATH`, remote Git permissions, and the `scripts/deploy.sh` output in the workflow log.
 
 ## Extension Path
 

@@ -59,6 +59,36 @@ def _request_json(
     request_id: str | None,
     include_auth: bool = True,
 ) -> dict:
+    data, _meta = _request_json_with_meta(
+        service_name=service_name,
+        action_name=action_name,
+        url=url,
+        method=method,
+        payload=payload,
+        service=service,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        include_auth=include_auth,
+    )
+    return data
+
+
+def _request_json_with_meta(
+    *,
+    service_name: str,
+    action_name: str | None,
+    url: str,
+    method: str,
+    payload: dict | None,
+    service,
+    timeout_seconds: float,
+    retries: int,
+    idempotency_key: str | None,
+    request_id: str | None,
+    include_auth: bool = True,
+) -> tuple[dict, dict]:
     headers, resolved_request_id = build_headers(
         service,
         request_id=request_id,
@@ -93,13 +123,18 @@ def _request_json(
 
         if response.status_code in RETRYABLE_STATUS_CODES and attempt < attempts - 1:
             continue
-        return decode_response(
+        data = decode_response(
             response,
             service_name=service_name,
             action_name=action_name,
             path=url,
             request_id=resolved_request_id,
         )
+        return data, {
+            "http_status": response.status_code,
+            "request_id": response.headers.get("X-Request-ID") or resolved_request_id,
+            "sent_request_id": resolved_request_id,
+        }
     if last_error:
         raise last_error
     raise NetworkError("request failed", service_name=service_name, action_name=action_name, path=url)

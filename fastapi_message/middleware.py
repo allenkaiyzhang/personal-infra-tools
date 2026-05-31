@@ -79,13 +79,13 @@ def setup_message_pipeline(
 
 
 def _resolve_auth_mode(service_name: str, explicit_auth_mode: str | None) -> tuple[str, str | None]:
-    if explicit_auth_mode:
-        return explicit_auth_mode, None
     try:
         registry = load_registry()
         service = registry.services.get(service_name)
     except Exception:
         service = None
+    if explicit_auth_mode:
+        return explicit_auth_mode, service.token_env if service else None
     if service:
         return service.auth, service.token_env
     return "none", None

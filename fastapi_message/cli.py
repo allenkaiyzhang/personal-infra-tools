@@ -8,7 +8,7 @@ import typer
 
 from .actions import ping, send_action
 from .files import send_file, send_file_action
-from .message import send_message
+from .message import _request_json_with_meta, send_message
 from .registry import load_registry, validate_registry
 
 app = typer.Typer(help="Registry-driven FastAPI message helpers.")
@@ -22,17 +22,89 @@ def validate_registry_command(check_token_env: bool = False) -> None:
 
 @app.command("ping")
 def ping_command(service_name: str) -> None:
-    result = ping(service_name)
-    typer.echo(json.dumps({"service": service_name, "status": result.get("status"), "response": result}, indent=2))
+    registry = load_registry()
+    service = registry.service(service_name)
+    result, meta = _request_json_with_meta(
+        service_name=service_name,
+        action_name="health",
+        url=f"{service.base_url}{service.health_path}",
+        method="GET",
+        payload=None,
+        service=service,
+        timeout_seconds=registry.timeout_seconds,
+        retries=registry.retries,
+        idempotency_key=None,
+        request_id=None,
+        include_auth=False,
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "service": service_name,
+                "status": result.get("status"),
+                "http_status": meta["http_status"],
+                "request_id": meta["request_id"],
+                "response": result,
+            },
+            indent=2,
+        )
+    )
 
 
 @app.command("smoke")
 def smoke_command(service_name: str) -> None:
     registry = load_registry()
     service = registry.service(service_name)
-    health = send_message(service_name, service.health_path, method="GET")
-    hello = send_message(service_name, service.hello_path, method="GET")
-    typer.echo(json.dumps({"service": service_name, "health": health, "hello": hello}, indent=2))
+    health, health_meta = _request_json_with_meta(
+        service_name=service_name,
+        action_name="health",
+        url=f"{service.base_url}{service.health_path}",
+        method="GET",
+        payload=None,
+        service=service,
+        timeout_seconds=registry.timeout_seconds,
+        retries=registry.retries,
+        idempotency_key=None,
+        request_id=None,
+        include_auth=False,
+    )
+    hello, hello_meta = _request_json_with_meta(
+        service_name=service_name,
+        action_name="hello",
+        url=f"{service.base_url}{service.hello_path}",
+        method="GET",
+        payload=None,
+        service=service,
+        timeout_seconds=registry.timeout_seconds,
+        retries=registry.retries,
+        idempotency_key=None,
+        request_id=None,
+        include_auth=True,
+    )
+    if health_meta["http_status"] < 200 or health_meta["http_status"] >= 300:
+        raise typer.Exit(1)
+    if hello_meta["http_status"] < 200 or hello_meta["http_status"] >= 300:
+        raise typer.Exit(1)
+    if not health_meta["request_id"] or not hello_meta["request_id"]:
+        raise typer.BadParameter("missing X-Request-ID in smoke response")
+    typer.echo(
+        json.dumps(
+            {
+                "service": service_name,
+                "health": {
+                    "http_status": health_meta["http_status"],
+                    "request_id": health_meta["request_id"],
+                    "response": health,
+                },
+                "hello": {
+                    "http_status": hello_meta["http_status"],
+                    "request_id": hello_meta["request_id"],
+                    "response": hello,
+                },
+            },
+            indent=2,
+        )
+    )
 
 
 @app.command("action")

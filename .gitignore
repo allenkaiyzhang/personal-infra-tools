@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .env
 services.yaml
+*.secret
 data/
 logs/
 dist/

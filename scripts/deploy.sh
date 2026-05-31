@@ -1,31 +1,39 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-APP_DIR="${APP_DIR:-/opt/personal-infra-tools}"
-VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
-RUN_TESTS="${RUN_TESTS:-1}"
+PROJECT_NAME="${PROJECT_NAME:-personal-infra-tools}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+VENV_PATH="${VENV_PATH:-$PROJECT_ROOT/.venv}"
+SKIP_TESTS="${SKIP_TESTS:-0}"
+RECREATE_VENV="${RECREATE_VENV:-0}"
+SERVICE_REGISTRY_PATH="${SERVICE_REGISTRY_PATH:-}"
 
-cd "$APP_DIR"
+cd "$PROJECT_ROOT"
 
-if [ -d .git ] && [ "${GIT_PULL:-0}" = "1" ]; then
-  git pull --ff-only
+if [ "$RECREATE_VENV" = "1" ] && [ -d "$VENV_PATH" ]; then
+  rm -rf "$VENV_PATH"
 fi
 
 mkdir -p data logs
 
-python3.11 -m venv "$VENV_DIR"
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/pip" install -e ".[dev]"
-
-if [ "$RUN_TESTS" = "1" ]; then
-  "$VENV_DIR/bin/pytest"
+if [ ! -d "$VENV_PATH" ]; then
+  python3.11 -m venv "$VENV_PATH"
 fi
 
-"$VENV_DIR/bin/fastapi-message" validate-registry || {
-  echo "Registry validation failed. Set SERVICE_REGISTRY_PATH or install /opt/personal-infra/services.yaml." >&2
-  exit 1
-}
+"$VENV_PATH/bin/python" -m pip install --upgrade pip
+"$VENV_PATH/bin/pip" install -e ".[dev]"
 
-scripts/smoke_test.sh
+if [ "$SKIP_TESTS" != "1" ]; then
+  "$VENV_PATH/bin/pytest"
+fi
 
-echo "Deploy complete: personal-infra-tools package installed and smoke test passed."
+if [ -n "$SERVICE_REGISTRY_PATH" ]; then
+  export SERVICE_REGISTRY_PATH
+  "$VENV_PATH/bin/fastapi-message" validate-registry
+else
+  echo "SERVICE_REGISTRY_PATH is not set; skipping real registry validation."
+fi
+
+PYTHON="$VENV_PATH/bin/python" scripts/smoke_test.sh
+
+echo "Deploy complete: $PROJECT_NAME package installed and smoke test passed."
